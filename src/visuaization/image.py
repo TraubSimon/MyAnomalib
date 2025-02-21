@@ -1,4 +1,4 @@
-from Visuaizer import Visualizer
+from src.visuaization import Visualizer
 
 class ImageVisualizer(Visualizer):
     """Image Visualizer"""
