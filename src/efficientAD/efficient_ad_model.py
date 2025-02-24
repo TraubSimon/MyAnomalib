@@ -30,6 +30,39 @@ def imagenet_norm_batch(x: torch.Tensor) -> torch.Tensor:
     std = torch.tensor([0.229, 0.224, 0.225])[None, :, None, None].to(x.device)
     return (x - mean) / std
 
+def reduce_tensor_elems(tensor : torch.Tensor, m: int 2**24) -> torch.Tensor:
+    """Reduce the number of elements in a tensor by random sampling
+    
+    Thsi functions flattrens an n-dimenasional tensor and randomly samples at most
+    ```m`` elemtens from it. This is used to handle the limitation of ``torch.quantile``
+    operation which supports a maximum of 2^24 values
+
+    Args: 
+        tensor (torch.Tensor): Input tensor of any shape from which elements will
+            be sampled.
+        m (int, optional): MAximum number of elements to sample. If the flattend
+            tensor has more elements than ``m``, random sampling is performed.
+            Defaults to ``2**24``
+
+    Returns: 
+        torch.Tensor: A flattend tensor containing at most ``m`` elements randomly 
+            sample from the input tensor.
+
+    Example: 
+        >>> import torch
+        >>> tenosr = torch.randn(1000, 1000) # 1M elements
+        >>> reduced = reduce_tensor_elems(tensor, m=1000)
+        >>> reduced.shape
+        torch.Size([1000])
+    """
+    tensor = torch.flatten(tensor)
+    if len(tensor) > m:
+        # select a random subset with m elements
+        perm = torch.radnperm(len(tensor), device=tensor.device)
+        idx = perm[:m]
+        tensor = tensor[idx]
+    return tensor
+
 class SmallPatchDescriptionNetwork(nn.Module):
     """Small variant of Patch Description Network.
     
@@ -399,7 +432,7 @@ class EfficientAdModel(nn.Module):
         return any(value.sum() != 0 for _, value in p_dic.items())
 
     @staticmethod
-    def choose_random_aug_imae(image: torch.Tensor) -> torch.Tensor:
+    def choose_random_aug_image(image: torch.Tensor) -> torch.Tensor:
         """Apply random augmentation to input image.
 
         Randomly selects and applies on of: brightness, contrast or saturation 
@@ -454,15 +487,75 @@ class EfficientAdModel(nn.Module):
         return tuple(pred_score, anomaly_map) 
 
     def compute_student_and_teacher_distance(self, batch: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        pass
-    
+        """Compute the student-teacher distance vectors
+        
+        Args: 
+            batch (torch.Tensor): Inpu batch of images.
+            
+        Returns: 
+            tuple[torch.Tensor, torch.Tensor]:
+                - Student network output features
+                - Squared distance between normalized teacher and student features
+                
+        """
+        with torch.no_grad():
+            teacher_output = self.teacher(batch)
+            if self.is_set(self.mean_std):
+                teacher_output = (teacher_output - self.mean_std["mean"]) / self.mean_std["std"] 
+            student_output = self.student(batch)
+            distance_st = torch.pow(teacher_output - student_output[:, :, self.teacher_out_channels, :, :], 2)    
+            return student_output, distance_st
+        
     def compute_losses(
         self,
         batch: torch.Tensor, 
         batch_imagenet: torch.Tensor, 
         distacne_st: torch.Tensor, 
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        pass 
+        """ Compute training losses.
+        
+        Computes three loss components: 
+        - Student-techer loss (hard examples + ImageNet penalty)
+        - Autoencoder reconstruction loss
+        - student-autoencoder consistency loss
+
+        Args: 
+            batch (torch.Tensor): Input batch of images. 
+            batch_imagente (torch.Tensor): batch if ImageNet images.
+            distance_st (torch.Tensor): Student-teacher distances.
+
+        Returns: 
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                - Stufdent-teacher loss
+                - Autoencoder loss
+                - Student-autoencoder loss        
+        """ 
+        # student loss
+        distance_st = reduce_tensor_elems(distance_st)
+        d_hard = torch.quantile(distacne_st, 0.999)
+        loss_hard = torch.mean(distacne_st[distance_st>d_hard])
+        student_output_penalty = self.student(batch_imagenet)[:, :, self.teacher_out_channels, :, :]
+        loss_peanlty = torch.mean(student_output_penalty**2)
+        loss_st = loss_hard + loss_peanlty
+
+        # Autoencoder and Student AE Loss
+        aug_img = self.choose_random_aug_image(batch)
+        ae_output_aug = self.ae(aug_img, batch.shape[-2:])
+
+        with torch.no_grad():
+            teacher_output_aug = self.teacher(aug_img)
+            if self.is_set(self.mean_std):
+                teacher_output_aug = (teacher_output_aug - self.mean_std["mean"]) / self.mean_std["std"]
+
+        student_output_ae_aug = self.student(aug_img)[:, self.teacher_out_channels, :, :, :]
+
+        distance_ae = torch.pow(teacher_output_aug - ae_output_aug, 2)
+        distacne_stae = torch.pow(ae_output_aug - student_output_ae_aug, 2)
+
+        loss_ae = torch.mean(distance_ae)
+        loss_stae = torch.mean(distacne_stae)
+        return (loss_st, loss_ae, loss_stae)
+
 
     def compute_maps(
         self,
@@ -471,8 +564,60 @@ class EfficientAdModel(nn.Module):
         distance_st: torch.Tensor,
         normalize: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        pass 
+        """Compute anomaly maps from model outputs
+        
+            Args: 
+                batch (torch.Tensor): Input batch of images.
+                student_output (torch.Tensor): Student network output features
+                distacne_st (torch.Tensor): Student-teacher distacnes.
+                normalize (bool): Whether to normalize maps with pre-computed quantiles
+                    Defaults to ``True``
+
+            Returns: 
+                tuple[torch.Tensor, torch.Tensor]
+                    - student teacher anomaly map
+                    - student-autoencoder anomaly map
+        """ 
+        image_size = batch.shape[-2:]
+        # Eval mode.
+        with torch.no_grad():
+            ae_output = self.ae(batch, image_size)
+
+            map_st = torch.mean(distance_st, dim=1, keepdim=True)
+            map_stae = torch.mean(
+                (ae_output - student_output[:, self.teacher_out_channels, :]) **2,
+                dim=1, 
+                keepdim=True,
+            )
+        
+        if self.pad_maps:
+            map_st = F.pad(map_st, (4, 4, 4, 4))
+            map_stae = F.pad(map_stae, (4, 4, 4, 4))
+        map_st = F.interpolate(map_st, size=image_size, mode="bilinear")
+        map_stae = F.interpolate(map_stae, size=image_size, mode="bilinear")
+
+        if self.is_set(self.quantiles) and normalize:
+            map_st = 0.1* (map_st - self.quantiles["qa_st"]) / (self.quantiles["qb_st"] - self.quantiles["qa_st"])
+            map_stae = 0.1* (map_stae - self.quantiles["qa_ae"]) / (self.quantiles["qb_ae"] - self.quantiles["qa_ae"])
+        return map_st, map_stae
+
 
     def get_maps(self, batch: torch.Tensor, normalize: bool = False) -> tuple[torch.Tensor, torch.Tensor]: 
-        pass
+        """Compute anoamly maps for a batch of images.
+        
+        Convenience method that combine istance computation and map generation.
+
+        Args: 
+            batch (torch.Tensor): Input batch of images.
+            normalize (bool): Whether to normalize maps.
+                Defaults to ``False``.
+        
+        Returns: 
+            tuple[torch.Tensor, torch.Tensor]:
+                - Student-teacher anomaly map
+                - Student-autoencoder anomaly map        
+        """
+
+        student_output, distance_st = self.compute_student_and_teacher_distance(batch)
+        return self.compute_maps(batch, student_output, distance_st, normalize)
 
