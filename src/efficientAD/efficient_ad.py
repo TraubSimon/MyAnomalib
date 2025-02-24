@@ -10,6 +10,7 @@ The model consists of:
 
 """
 from pathlib import Path
+import torch
 
 from efficient_ad_model_size import EfficientAdModelSize 
 from efficient_ad_model import EfficientAdModel
@@ -18,10 +19,6 @@ from src.visuaization import Visualizer
 from src.pre_processing import PreProcessor
 from src.post_processing import PostProcessor
 from src.evaluation import Evaluator
-
-
-print("Hello World")
-
 
 class EfficientAD():
     """PL Module for EfficientAD algorithm
@@ -70,7 +67,7 @@ class EfficientAD():
         if not isinstance(model_size, EfficientAdModelSize):
             model_size = EfficientAdModelSize(model_size)
         self.model_size: EfficientAdModelSize = model_size
-        self.model: EfficientAdModel(
+        self.model: EfficientAdModel = EfficientAdModel(
             teacher_out_channels=teacher_out_channels, 
             model_size=model_size, 
             padding=padding, 

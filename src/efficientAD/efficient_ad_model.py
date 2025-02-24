@@ -1,8 +1,9 @@
 import math
-
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torchvision import transforms
 
 from efficient_ad_model_size import EfficientAdModelSize
 
@@ -387,19 +388,70 @@ class EfficientAdModel(nn.Module):
 
     @staticmethod
     def is_set(p_dic: nn.ParameterDict) -> bool:
-        pass 
+        """Check if any parameters in the dictionaly are non-zero.
+
+        Args:
+            p_dic (nn.ParamDict): Parameters dictionary to check.
+
+        Returns:
+            bool: ``True`` of any parameter is non-zero, ``False`` otherwise.
+        """ 
+        return any(value.sum() != 0 for _, value in p_dic.items())
 
     @staticmethod
     def choose_random_aug_imae(image: torch.Tensor) -> torch.Tensor:
-        pass 
+        """Apply random augmentation to input image.
+
+        Randomly selects and applies on of: brightness, contrast or saturation 
+        adjustment with coefficient sampled from U(0.8, 1.2).
+
+        Args:
+            image (trch.Tensor): Input image tensor.
+
+        Returns: 
+            torch.Tensor: Augmented image tensor.
+
+        """ 
+        transform_functions = [
+            transforms.functional.adjust_brightness, 
+            transforms.functional.adjust_contrast, 
+            transforms.functional.adjust_saturation,
+        ]
+        # Sample an augmentation coefficient λ from the uniform distribution U(0.8, 1.2)
+        coefficient = np.random.default_rng().uniform(0.8, 1.2)
+        transform_function = np.random.default_rng().choice(transform_functions)
+        return transform_function(image, coefficient) 
 
     def forward(
         self,
         batch: torch.Tensor,
         batch_imagenet: torch.Tensor | None = None,
         normalize: bool = True, 
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | InferenceBatch:
-        pass 
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Forward pass through the model
+
+        Args: 
+            batch (torch.Tensor): Input batch of images.
+            batch_imagenet (torch.Tensor | None): Optional batch of ImageNet
+                images for training. Defaults to ``None``
+            normalize (bool): Whether to normalize anomaly maps
+                Defaults to ``True``
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor,torch.Tensor]:
+                If trinaing: 
+                    - Loss components (student-teacher, autoencoder, student-autoencoder)
+                If inference:
+                    - Batch containing anomaly maps and scores
+        """ 
+        student_output, distance_st = self.compute_student_and_teacher_distance(batch)
+        if self.training:
+            return self.compute_losses(batch, batch_imagenet, distance_st)
+
+        map_st, map_stae = self.compute_maps(batch, student_output, distance_st, normalize)
+        anomaly_map = 0.5 * map_st + 0.5 * map_stae
+        pred_score = torch.amax(anomaly_map, dim=(-2, -1))
+        return tuple(pred_score, anomaly_map) 
 
     def compute_student_and_teacher_distance(self, batch: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         pass
