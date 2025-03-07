@@ -7,7 +7,7 @@ pipeline.
 import copy 
 from torchvision.transforms.v2 import CenterCrop, Compose, Resize, Transform
 
-from src.data.ExportableCenterCrop import ExportableCenterCrop
+from src.data.transforms import ExportableCenterCrop
 
 def get_exportable_transform(transform: Transform | None) -> Transform | None:
     """Get an exportable version of a transform.
