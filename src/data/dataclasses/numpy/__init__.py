@@ -55,13 +55,12 @@ Note:
 
 from .base import NumpyBatch, NumpyItem
 from .image import NumpyImageBatch, NumpyImageItem
-from .video import NumpyVideoBatch, NumpyVideoItem
 
 __all__ = [
     "NumpyBatch",
     "NumpyItem",
     "NumpyImageBatch",
     "NumpyImageItem",
-    "NumpyVideoBatch",
-    "NumpyVideoItem",
+    # "NumpyVideoBatch",
+    # "NumpyVideoItem",
 ]

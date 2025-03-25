@@ -10,7 +10,7 @@ import re
 import io
 import logging
 import hashlib
-import pathlib as Path
+from pathlib import Path
 from collections.abc import Iterable
 from tqdm import tqdm
 from dataclasses import dataclass
@@ -336,6 +336,23 @@ def download_and_extract(root: Path, info: DownloadInfo) -> None:
             raise RuntimeError(msg)
         
     extract(downloaded_file_path, root)
+
+def is_within_directory(directory: Path, target: Path) -> bool:
+    """Check if a target path is located within a given directory.
+    
+    Args:
+        directory: Path of the parent directory
+        target: Path to check
+    
+    Returns: 
+        ``True`` if target is within directory, ``False`` otherwise
+    """
+
+    abs_directory = directory.resolve()
+    abs_target = target.resolve() 
+
+    prefix = os.path.commonprefix([abs_directory, abs_target])
+    return prefix == str(abs_directory)
 
 
 

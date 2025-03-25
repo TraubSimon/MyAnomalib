@@ -132,6 +132,7 @@ class AnomalibModule(ExportMixin, pl.LightningModule, ABC):
         self.visualizer = self._resolve_component(visualizer, Visualizer, self.configure_visualizer)
 
         self._input_size: tuple[int, int] | None = None 
+    
     @property
     def name(self) -> str:
         """Get name of the model.

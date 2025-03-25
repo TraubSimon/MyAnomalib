@@ -45,14 +45,8 @@ from lightning_utilities.core.imports import module_available
 from torch import nn
 from torchmetrics import Metric 
 
-from src.data import AnomalibDataModule 
-from src.deploy.export import CompressionType, ExportType 
+from src.deploy.export import ExportType 
 
-if TYPE_CHECKING:
-    from importlib.util import find_spec
-
-    if find_spec("openvino") is not None:
-        from openvino import CompileModel
 
 logger = logging.getLogger(__name__)
 
@@ -135,4 +129,29 @@ class ExportMixin:
             if input_size
             else {"input": {0: "bactch_size", 2: "height", 3: "width"}, "output": {0: "batch_size"}}
         )
-        onn
+        onnx_path = export_root / (model_file_name + ".onnx")
+        # apply pass throgh the model to get output names
+        output_names =[name for name, value in self.eval()(input_shape)._asdict().items() if value is not None]
+        torch.onnx.export(
+            self, 
+            (input_shape.to(self.devive), ),
+            str(onnx_path), 
+            dynamic_axes=dynamic_axes, 
+            input_names=["input"],
+            output_names=output_names,
+        )
+        return onnx_path
+    
+def _create_export_root(export_root: str | Path, export_type: ExportType) -> Path:
+    """Create a directory structure for model export.
+    
+    Args:
+        export_root (str | Path): Root directory of exports
+        export_type (ExportType): Type of export(torch, onnx)
+    
+    Returns:
+        Path: Create directory path
+    """
+    export_root = Path(export_root) / "weights" / export_type.value 
+    export_root.mkdir(parents=True, exist_ok=True)
+    return export_root

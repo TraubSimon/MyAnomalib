@@ -34,7 +34,7 @@ from itertools import chain
 
 from omegaconf import DictConfig, ListConfig
 
-from anomalib.utils.config import to_tuple
+from src.utils.config import to_tuple
 
 # Dataclasses
 from .dataclasses import (
@@ -60,8 +60,8 @@ logger = logging.getLogger(__name__)
 
 
 DataFormat = Enum(  # type: ignore[misc]
-    "DataFormat",
-    {i.name: i.value for i in chain(DepthDataFormat, ImageDataFormat, VideoDataFormat)},
+    "DataFormat", 
+    {ImageDataFormat.name : ImageDataFormat.value}   
 )
 
 
